@@ -30,7 +30,19 @@ export type PoliteFetchOptions = {
   maxRetries?: number;
   respectRobots?: boolean;
   fetchImpl?: typeof fetch;
+  /**
+   * Rate-limit bucket for a host. Multi-tenant platforms give every company its own
+   * hostname but share infrastructure (and rate limits), so they share one bucket.
+   */
+  hostGroup?: (host: string) => string;
 };
+
+const SHARED_PLATFORMS = [".myworkdayjobs.com", ".myworkdaysite.com", ".oraclecloud.com", ".bamboohr.com", ".icims.com"];
+
+export function defaultHostGroup(host: string): string {
+  const shared = SHARED_PLATFORMS.find((suffix) => host.endsWith(suffix));
+  return shared ? `*${shared}` : host;
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,6 +56,7 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
     maxRetries = 2,
     respectRobots = true,
     fetchImpl = fetch,
+    hostGroup = defaultHostGroup,
   } = opts;
 
   const robotsCache = new Map<string, Promise<RobotsRules>>();
@@ -112,26 +125,29 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
       const paths = [u.pathname + u.search, ...(alsoRequirePaths ?? [])];
       if (!paths.every((p) => isPathAllowed(robots, p))) throw new RobotsDisallowedError(url);
       if (robots.crawlDelaySec) {
-        const h = hostState(u.host);
+        const h = hostState(hostGroup(u.host));
         h.gapMs = Math.max(h.gapMs, robots.crawlDelaySec * 1000);
       }
     }
 
+    const bucket = hostGroup(u.host);
     for (let attempt = 0; ; attempt++) {
-      await acquire(u.host);
+      await acquire(bucket);
       let res: Response;
       try {
         res = await rawFetch(url, reqInit);
       } catch (err) {
-        release(u.host);
+        release(bucket);
         if (attempt >= maxRetries || (err as Error).name === "AbortError") throw err;
         await sleep(500 * 2 ** attempt);
         continue;
       }
-      release(u.host);
+      release(bucket);
       if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
         const retryAfter = Number(res.headers.get("retry-after"));
-        const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 30_000) : 1000 * 2 ** attempt;
+        // 429 without Retry-After: back off harder (3s, 6s, ...) than for 5xx (1s, 2s, ...).
+        const base = res.status === 429 ? 3000 : 1000;
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 30_000) : base * 2 ** attempt;
         await res.body?.cancel();
         await sleep(delay);
         continue;
