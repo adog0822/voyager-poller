@@ -32,7 +32,9 @@ export type Fingerprint =
       needsReview?: string;
     };
 
-const WORKDAY_LOCALE = /^[a-z]{2}(-[A-Z]{2})?$/;
+// Locale path prefix: "en-US", "en-us", "fr-CA", or a bare lowercase language code.
+// Two-letter *site* names exist ("JJ", "AW", "hu"), so bare codes are a fixed list.
+const WORKDAY_LOCALE = /^([a-z]{2}-[a-z]{2}|en|fr|de|es|it|pt|nl|ja|zh|ko|pl|sv)$/i;
 
 function seg(url: URL): string[] {
   return url.pathname.split("/").filter(Boolean).map(decodeURIComponent);

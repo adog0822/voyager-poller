@@ -3,7 +3,8 @@ import { decodeEntities, htmlToText } from "../text.ts";
 
 // SAP SuccessFactors Recruiting Marketing career sites (company domains).
 //   GET https://{host}/sitemap.xml  → RSS 2.0 feed of every live job, with descriptions.
-// The /services/rss/job/ feed is robots-disallowed on these sites, so we use the sitemap.
+//   Some sites serve a standard <urlset> there and the RSS feed at /sitemal.xml instead.
+// The /services/rss/job/ feed is robots-disallowed on these sites, so we use the sitemaps.
 // Items carry no publish date: `first_seen_at` is the freshness signal.
 
 export type SfItem = { id: string; title: string; link: string; location: string | null; description: string | null };
@@ -40,11 +41,16 @@ export const successfactors: Adapter<SfItem> = {
 
   async fetchList(src, ctx) {
     const host = src.config.host ?? src.boardToken;
-    const res = await ctx.fetch(`https://${host}/sitemap.xml`, { signal: ctx.signal, headers: { Accept: "application/xml, text/xml" } });
-    if (!res.ok) throw new AdapterError(`successfactors ${res.status} ${src.boardToken}`, "successfactors", res.status);
-    const xml = await res.text();
-    if (!xml.includes("<rss")) throw new AdapterError(`successfactors sitemap is not an RSS job feed ${host}`, "successfactors");
-    return parseSfSitemap(xml);
+    for (const path of ["/sitemap.xml", "/sitemal.xml"]) {
+      const res = await ctx.fetch(`https://${host}${path}`, { signal: ctx.signal, headers: { Accept: "application/xml, text/xml" } });
+      if (!res.ok) {
+        await res.body?.cancel();
+        continue;
+      }
+      const xml = await res.text();
+      if (xml.includes("<rss")) return parseSfSitemap(xml);
+    }
+    throw new AdapterError(`successfactors: no RSS job feed at /sitemap.xml or /sitemal.xml (${host})`, "successfactors");
   },
 
   normalize(_src, it) {
