@@ -35,6 +35,14 @@ export type PoliteFetchOptions = {
    * hostname but share infrastructure (and rate limits), so they share one bucket.
    */
   hostGroup?: (host: string) => string;
+  /** Per-bucket overrides of concurrency / minimum gap (e.g. a roomier Workday bucket). */
+  groupLimits?: Record<string, { concurrency: number; gapMs: number }>;
+};
+
+// Workday: ~1.2k tenants share one bucket. 6 in flight / 150ms apart avoided 429s in
+// production while keeping a full cold run well under the Actions job timeout.
+export const DEFAULT_GROUP_LIMITS: Record<string, { concurrency: number; gapMs: number }> = {
+  "*.myworkdayjobs.com": { concurrency: 6, gapMs: 150 },
 };
 
 const SHARED_PLATFORMS = [".myworkdayjobs.com", ".myworkdaysite.com", ".oraclecloud.com", ".bamboohr.com", ".icims.com"];
@@ -57,23 +65,26 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
     respectRobots = true,
     fetchImpl = fetch,
     hostGroup = defaultHostGroup,
+    groupLimits = DEFAULT_GROUP_LIMITS,
   } = opts;
 
   const robotsCache = new Map<string, Promise<RobotsRules>>();
-  const hosts = new Map<string, { active: number; nextStart: number; waiters: (() => void)[]; gapMs: number }>();
+  type Bucket = { active: number; nextStart: number; waiters: (() => void)[]; gapMs: number; concurrency: number };
+  const hosts = new Map<string, Bucket>();
 
-  function hostState(host: string) {
-    let h = hosts.get(host);
+  function hostState(key: string) {
+    let h = hosts.get(key);
     if (!h) {
-      h = { active: 0, nextStart: 0, waiters: [], gapMs: minGapMs };
-      hosts.set(host, h);
+      const limit = groupLimits[key];
+      h = { active: 0, nextStart: 0, waiters: [], gapMs: limit?.gapMs ?? minGapMs, concurrency: limit?.concurrency ?? perHostConcurrency };
+      hosts.set(key, h);
     }
     return h;
   }
 
-  async function acquire(host: string) {
-    const h = hostState(host);
-    while (h.active >= perHostConcurrency) await new Promise<void>((r) => h.waiters.push(r));
+  async function acquire(key: string) {
+    const h = hostState(key);
+    while (h.active >= h.concurrency) await new Promise<void>((r) => h.waiters.push(r));
     h.active++;
     const wait = h.nextStart - Date.now();
     h.nextStart = Math.max(Date.now(), h.nextStart) + h.gapMs;
