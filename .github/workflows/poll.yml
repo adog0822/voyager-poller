@@ -1,0 +1,55 @@
+name: poll
+
+on:
+  # Primary trigger: Voyager's Cloudflare cron (every 30 min) via the GitHub API.
+  workflow_dispatch:
+    inputs:
+      tiers:
+        description: "Comma-separated tiers to poll (hot,warm,cold)"
+        required: false
+        default: "hot"
+  # Backup only: GitHub's own schedule is best-effort and can lag.
+  schedule:
+    - cron: "17 */2 * * *"
+
+concurrency:
+  group: poll
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --omit=dev
+
+      - name: Restore poll state
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: poll-state-${{ github.run_id }}
+          restore-keys: poll-state-
+
+      - name: Poll
+        env:
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_HMAC_KEY: ${{ secrets.INGEST_HMAC_KEY }}
+          TIERS: ${{ github.event.inputs.tiers || 'hot' }}
+        run: node src/run.ts
+
+      - name: Save poll state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: poll-state-${{ github.run_id }}

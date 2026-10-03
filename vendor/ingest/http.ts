@@ -1,0 +1,142 @@
+import { ALLOW_ALL, DISALLOW_ALL, isPathAllowed, parseRobots, type RobotsRules } from "./robots.ts";
+
+export type PoliteFetchInit = RequestInit & {
+  /**
+   * Extra paths on the same host that must also be allowed by robots.txt.
+   * Workday: the career site path (`/{site}/`) a company disallows, even though the
+   * JSON API lives under `/wday/cxs/`.
+   */
+  alsoRequirePaths?: string[];
+};
+export type PoliteFetch = (url: string, init?: PoliteFetchInit) => Promise<Response>;
+
+export class RobotsDisallowedError extends Error {
+  readonly url: string;
+  constructor(url: string) {
+    super(`robots.txt disallows ${url}`);
+    this.name = "RobotsDisallowedError";
+    this.url = url;
+  }
+}
+
+export type PoliteFetchOptions = {
+  userAgent: string;
+  /** Token matched against robots.txt `User-agent:` lines. */
+  robotsToken?: string;
+  timeoutMs?: number;
+  perHostConcurrency?: number;
+  /** Minimum gap between request starts to the same host (raised by Crawl-delay). */
+  minGapMs?: number;
+  maxRetries?: number;
+  respectRobots?: boolean;
+  fetchImpl?: typeof fetch;
+};
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
+  const {
+    userAgent,
+    robotsToken = "VoyagerBot",
+    timeoutMs = 10_000,
+    perHostConcurrency = 3,
+    minGapMs = 300,
+    maxRetries = 2,
+    respectRobots = true,
+    fetchImpl = fetch,
+  } = opts;
+
+  const robotsCache = new Map<string, Promise<RobotsRules>>();
+  const hosts = new Map<string, { active: number; nextStart: number; waiters: (() => void)[]; gapMs: number }>();
+
+  function hostState(host: string) {
+    let h = hosts.get(host);
+    if (!h) {
+      h = { active: 0, nextStart: 0, waiters: [], gapMs: minGapMs };
+      hosts.set(host, h);
+    }
+    return h;
+  }
+
+  async function acquire(host: string) {
+    const h = hostState(host);
+    while (h.active >= perHostConcurrency) await new Promise<void>((r) => h.waiters.push(r));
+    h.active++;
+    const wait = h.nextStart - Date.now();
+    h.nextStart = Math.max(Date.now(), h.nextStart) + h.gapMs;
+    if (wait > 0) await sleep(wait);
+  }
+
+  function release(host: string) {
+    const h = hostState(host);
+    h.active--;
+    h.waiters.shift()?.();
+  }
+
+  async function rawFetch(url: string, init: RequestInit = {}) {
+    const headers = new Headers(init.headers);
+    headers.set("User-Agent", userAgent);
+    if (!headers.has("Accept")) headers.set("Accept", "application/json, text/xml;q=0.9, */*;q=0.5");
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+      : AbortSignal.timeout(timeoutMs);
+    return fetchImpl(url, { ...init, headers, signal, redirect: "follow" });
+  }
+
+  function robotsFor(origin: string): Promise<RobotsRules> {
+    let p = robotsCache.get(origin);
+    if (!p) {
+      p = (async () => {
+        try {
+          const res = await rawFetch(`${origin}/robots.txt`, { headers: { Accept: "text/plain" } });
+          // RFC 9309: 4xx = no restrictions; 5xx/unreachable = assume full disallow.
+          if (res.status >= 400 && res.status < 500) return ALLOW_ALL;
+          if (!res.ok) return DISALLOW_ALL;
+          const type = res.headers.get("content-type") ?? "";
+          if (type.includes("html")) return ALLOW_ALL; // soft-404 HTML page, not a robots file
+          return parseRobots(await res.text(), robotsToken);
+        } catch {
+          return DISALLOW_ALL;
+        }
+      })();
+      robotsCache.set(origin, p);
+    }
+    return p;
+  }
+
+  return async function politeFetch(url, init = {}) {
+    const { alsoRequirePaths, ...reqInit } = init;
+    const u = new URL(url);
+    if (respectRobots) {
+      const robots = await robotsFor(u.origin);
+      const paths = [u.pathname + u.search, ...(alsoRequirePaths ?? [])];
+      if (!paths.every((p) => isPathAllowed(robots, p))) throw new RobotsDisallowedError(url);
+      if (robots.crawlDelaySec) {
+        const h = hostState(u.host);
+        h.gapMs = Math.max(h.gapMs, robots.crawlDelaySec * 1000);
+      }
+    }
+
+    for (let attempt = 0; ; attempt++) {
+      await acquire(u.host);
+      let res: Response;
+      try {
+        res = await rawFetch(url, reqInit);
+      } catch (err) {
+        release(u.host);
+        if (attempt >= maxRetries || (err as Error).name === "AbortError") throw err;
+        await sleep(500 * 2 ** attempt);
+        continue;
+      }
+      release(u.host);
+      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const retryAfter = Number(res.headers.get("retry-after"));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 30_000) : 1000 * 2 ** attempt;
+        await res.body?.cancel();
+        await sleep(delay);
+        continue;
+      }
+      return res;
+    }
+  };
+}

@@ -1,0 +1,17 @@
+{
+  "name": "voyager-poller",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "poll": "node src/run.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  }
+}
