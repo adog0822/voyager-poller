@@ -5,7 +5,7 @@ import type { PoliteFetch } from "./http.ts";
 /** A pollable source, as stored in D1 `sources` (subset the adapters need). */
 export type SourceConfig = {
   id?: number;
-  ats: ApiAts;
+  ats: ApiAts | "custom";
   boardToken: string;
   config: Record<string, string>;
   careersUrl?: string | null;
@@ -32,7 +32,7 @@ export type FetchContext = {
 };
 
 export interface Adapter<Raw = unknown> {
-  ats: ApiAts;
+  ats: ApiAts | "custom";
   /** Cheap list call(s). May pre-narrow server-side (Workday/Oracle keyword search). */
   fetchList(src: SourceConfig, ctx: FetchContext): Promise<Raw[]>;
   normalize(src: SourceConfig, raw: Raw, ctx: FetchContext): NormalizedPosting;

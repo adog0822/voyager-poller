@@ -10,6 +10,7 @@ export const PlanSource = z.object({
   ats: z.string(),
   boardToken: z.string(),
   config: z.record(z.string(), z.string()),
+  careersUrl: z.string().nullable().optional(),
 });
 export type PlanSource = z.infer<typeof PlanSource>;
 

@@ -14,6 +14,9 @@ export type ApiAts =
 
 /** Platforms with no usable public API: polled as HTML/JS pages (Phase 6). */
 export type CustomPlatform =
+  | "amazon"
+  | "microsoft"
+  | "jazzhr"
   | "icims"
   | "taleo"
   | "jobvite"
@@ -172,7 +175,17 @@ export function fingerprint(raw: string): Fingerprint | null {
     return { ats: "bamboohr", boardToken: slug, config: { slug }, careersUrl: `https://${slug}.bamboohr.com/careers` };
   }
 
-  // ---- No public API: custom pages (Phase 6) ----
+  // ---- No public ATS API: platform adapters in adapters/custom (Phase 6) ----
+  if (host === "www.amazon.jobs" || host === "amazon.jobs") {
+    return custom("amazon", "https://www.amazon.jobs/en/", "site:amazon.jobs@amazon");
+  }
+  if (host === "apply.careers.microsoft.com" || host === "jobs.careers.microsoft.com" || host === "careers.microsoft.com") {
+    return custom("microsoft", "https://apply.careers.microsoft.com/careers?domain=microsoft.com", "site:apply.careers.microsoft.com@microsoft");
+  }
+  const jazz = host.match(/^([a-z0-9-]+)\.applytojob\.com$/);
+  if (jazz) {
+    return custom("jazzhr", `https://${jazz[1]}.applytojob.com/apply`, `jazzhr:${jazz[1]}`);
+  }
   if (host.endsWith(".icims.com")) {
     const base = `https://${host}/jobs/search`;
     return custom("icims", base, base);

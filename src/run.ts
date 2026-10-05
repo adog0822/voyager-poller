@@ -90,7 +90,13 @@ async function main() {
   let listed = 0;
 
   await pool(plan.sources, CONCURRENCY, async (src) => {
-    const cfg: SourceConfig = { id: src.id, ats: src.ats as SourceConfig["ats"], boardToken: src.boardToken, config: src.config };
+    const cfg: SourceConfig = {
+      id: src.id,
+      ats: src.ats as SourceConfig["ats"],
+      boardToken: src.boardToken,
+      config: src.config,
+      careersUrl: src.careersUrl ?? null,
+    };
     const signal = AbortSignal.timeout(SOURCE_TIMEOUT_MS);
     try {
       const r = await listCandidates(cfg, { fetch, signal });

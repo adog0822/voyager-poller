@@ -43,9 +43,11 @@ export type PoliteFetchOptions = {
 // production while keeping a full cold run well under the Actions job timeout.
 export const DEFAULT_GROUP_LIMITS: Record<string, { concurrency: number; gapMs: number }> = {
   "*.myworkdayjobs.com": { concurrency: 6, gapMs: 150 },
+  // Microsoft's careers API rate-limits bursts: one request at a time, 1.5s apart.
+  "apply.careers.microsoft.com": { concurrency: 1, gapMs: 1500 },
 };
 
-const SHARED_PLATFORMS = [".myworkdayjobs.com", ".myworkdaysite.com", ".oraclecloud.com", ".bamboohr.com", ".icims.com"];
+const SHARED_PLATFORMS = [".myworkdayjobs.com", ".myworkdaysite.com", ".oraclecloud.com", ".bamboohr.com", ".icims.com", ".applytojob.com"];
 
 export function defaultHostGroup(host: string): string {
   const shared = SHARED_PLATFORMS.find((suffix) => host.endsWith(suffix));

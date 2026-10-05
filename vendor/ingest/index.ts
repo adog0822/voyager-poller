@@ -1,4 +1,5 @@
 export { adapters } from "./adapters/index.ts";
+export { SUPPORTED_CUSTOM_PLATFORMS, type CustomPlatformName } from "./adapters/custom/index.ts";
 export { parsePostedOn } from "./adapters/workday.ts";
 export { classifyRules, prefilter, type Cycle, type RuleResult } from "./coop.ts";
 export { fingerprint, normalizeUrl, NON_PUBLIC_WORKDAY_SITE, type ApiAts, type Fingerprint } from "./fingerprint.ts";
