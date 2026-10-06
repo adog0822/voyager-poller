@@ -33,7 +33,7 @@ const KEY = must("INGEST_HMAC_KEY");
 const TIERS = (process.env.TIERS || "hot").split(",").map((t) => t.trim()) as Tier[];
 const STATE_FILE = process.env.STATE_FILE || "state/state.json";
 const CONCURRENCY = Number(process.env.CONCURRENCY || 16);
-const ENRICH_BUDGET = Number(process.env.ENRICH_BUDGET || 400); // detail calls per run
+const ENRICH_BUDGET = Number(process.env.ENRICH_BUDGET || 600); // detail calls per run (new postings first, then the enrich queue)
 const SOURCE_TIMEOUT_MS = 120_000;
 const UA = "VoyagerBot/1.0 (+https://github.com/adog0822/voyager-poller)";
 const MAX_SOURCES_PER_REQUEST = 100;
