@@ -230,8 +230,10 @@ export function extractDetails(input: {
   const citizen = CITIZEN.test(desc);
 
   const pay = input.structuredPay ?? payFromText(desc);
+  const majors = majorsFrom(desc);
   return {
-    field: classifyField(input.title, input.department),
+    // Generic titles ("Engineering Co-op"): fall back to the majors the posting asks for.
+    field: classifyField(input.title, input.department) ?? fieldFrom(majors.join(", ")),
     department: input.department?.slice(0, 120) ?? null,
     pay,
     minGpa,
@@ -239,7 +241,7 @@ export function extractDetails(input: {
     degreeLevels,
     classYears,
     gradYears: [...gradYears].sort(),
-    majors: majorsFrom(desc),
+    majors,
     sponsorship,
     citizenshipRequired: citizen ? true : null,
     usPersonRequired: !citizen && US_PERSON.test(desc) ? true : null,

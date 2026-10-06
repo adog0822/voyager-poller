@@ -27,7 +27,16 @@ export const EnrichTask = z.object({
 });
 export type EnrichTask = z.infer<typeof EnrichTask>;
 
-export const PollPlan = z.object({ runId: z.string(), sources: z.array(PlanSource), enrich: z.array(EnrichTask).max(500).default([]) });
+/** A company whose public facts (Wikidata) are missing or stale. */
+export const FactsTask = z.object({ companyId: z.number().int(), name: z.string(), domain: z.string().nullable() });
+export type FactsTask = z.infer<typeof FactsTask>;
+
+export const PollPlan = z.object({
+  runId: z.string(),
+  sources: z.array(PlanSource),
+  enrich: z.array(EnrichTask).max(500).default([]),
+  facts: z.array(FactsTask).max(100).default([]),
+});
 export type PollPlan = z.infer<typeof PollPlan>;
 
 /** Descriptions are only for classification at ingest; trimmed and never stored in full. */
@@ -58,6 +67,24 @@ export const Enriched = z.object({
 export type Enriched = z.infer<typeof Enriched>;
 export const EnrichedBody = z.object({ runId: z.string(), items: z.array(Enriched).min(1).max(MAX_ENRICHED_PER_REQUEST) });
 export type EnrichedBody = z.infer<typeof EnrichedBody>;
+
+export const CompanyFactsBody = z.object({
+  runId: z.string(),
+  items: z
+    .array(
+      z.object({
+        companyId: z.number().int(),
+        wikidataId: z.string().regex(/^Q\d{1,12}$/).nullable(),
+        employees: z.number().int().nonnegative().max(10_000_000).nullable(),
+        sitelinks: z.number().int().nonnegative().max(1000).nullable(),
+        revenueUsd: z.number().nonnegative().max(1e13).nullable(),
+        isPublic: z.boolean().nullable(),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+export type CompanyFactsBody = z.infer<typeof CompanyFactsBody>;
 
 export const RunSummary = z.object({
   runId: z.string(),

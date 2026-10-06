@@ -8,6 +8,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createPoliteFetch,
+  companyFacts,
   enrich,
   extractDetails,
   listCandidates,
@@ -34,6 +35,7 @@ const STATE_FILE = process.env.STATE_FILE || "state/state.json";
 const CONCURRENCY = Number(process.env.CONCURRENCY || 16);
 const ENRICH_BUDGET = Number(process.env.ENRICH_BUDGET || 400); // detail calls per run
 const SOURCE_TIMEOUT_MS = 120_000;
+const UA = "VoyagerBot/1.0 (+https://github.com/adog0822/voyager-poller)";
 const MAX_SOURCES_PER_REQUEST = 100;
 const MAX_REQUEST_BYTES = 800_000; // Worker refuses bodies over 1 MB
 
@@ -86,7 +88,7 @@ async function main() {
   const plan = PollPlan.parse(await signedFetch("GET", `/api/poll-plan?tiers=${TIERS.join(",")}`));
   console.log(`run ${plan.runId}: ${plan.sources.length} sources (tiers=${TIERS.join(",")})`);
 
-  const fetch = createPoliteFetch({ userAgent: "VoyagerBot/1.0 (+https://github.com/adog0822/voyager-poller)" });
+  const fetch = createPoliteFetch({ userAgent: UA });
   const changed: Changed[] = [];
   const okSourceIds: number[] = [];
   const failures: RunSummary["failures"] = [];
@@ -163,6 +165,24 @@ async function main() {
     }
   }
 
+  // Company facts (Wikidata, CC0): serial, a few per run, per Wikimedia API etiquette.
+  const facts: { companyId: number; wikidataId: string | null; employees: number | null; sitelinks: number | null; revenueUsd: number | null; isPublic: boolean | null }[] = [];
+  for (const f of plan.facts) {
+    try {
+      facts.push({ companyId: f.companyId, ...(await companyFacts(f.name, f.domain, { userAgent: UA, signal: AbortSignal.timeout(20_000) })) });
+    } catch {
+      // Skip; it stays in the queue for a later run.
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  if (facts.length) {
+    try {
+      await signedFetch("POST", "/api/ingest/company-facts", { runId: plan.runId, items: facts });
+    } catch (err) {
+      console.error(`company-facts request failed (${String((err as Error).message).match(/-> (\d{3})/)?.[1] ?? "network"})`);
+    }
+  }
+
   // Pack changed sources into requests of <= 50 postings / <= 100 sources.
   // A source with > 50 candidates is split; only its final chunk carries fullIdList.
   const requests: IngestBody["sources"][] = [];
@@ -232,7 +252,7 @@ async function main() {
     [
       `polled=${plan.sources.length} ok=${okSourceIds.length} failed=${failures.length} (robots=${robots})`,
       `listed=${listed} changed=${changed.length} requests=${requests.length} inserted=${inserted}`,
-      `deferred=${deferred.size} sendFailures=${failedSend.size} enrichUsed=${ENRICH_BUDGET - enrichLeft} enrichedSent=${enrichedSent}/${plan.enrich.length}`,
+      `deferred=${deferred.size} sendFailures=${failedSend.size} enrichUsed=${ENRICH_BUDGET - enrichLeft} enrichedSent=${enrichedSent}/${plan.enrich.length} facts=${facts.length}/${plan.facts.length}`,
       `took=${Math.round((Date.now() - startedAt) / 1000)}s`,
     ].join("\n"),
   );
