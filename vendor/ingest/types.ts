@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ApiAts } from "./fingerprint.ts";
 import type { PoliteFetch } from "./http.ts";
+import { Details, Pay } from "./details.ts";
 
 /** A pollable source, as stored in D1 `sources` (subset the adapters need). */
 export type SourceConfig = {
@@ -23,6 +24,12 @@ export const NormalizedPosting = z.object({
   sourcePostedAt: z.number().int().positive().nullable(),
   /** Plain text, only when the list or detail call provided it. */
   descriptionText: z.string().max(20_000).nullable().optional(),
+  /** ATS department/category/team, when the board exposes one. */
+  department: z.string().max(200).nullable().optional(),
+  /** Structured pay from the ATS (Greenhouse pay ranges, Ashby compensation, Lever salaryRange). */
+  pay: Pay.nullable().optional(),
+  /** Rule-extracted facts, computed by the poller after the detail call. */
+  details: Details.optional(),
 });
 export type NormalizedPosting = z.infer<typeof NormalizedPosting>;
 

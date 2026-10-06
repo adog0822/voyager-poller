@@ -1,4 +1,5 @@
 import { AdapterError, type Adapter } from "../types.ts";
+import { unitFrom, type Pay } from "../details.ts";
 import { toEpochMs } from "../text.ts";
 
 // GET https://api.lever.co/v0/postings/{site}?mode=json   (EU: api.eu.lever.co)
@@ -9,11 +10,20 @@ export type LeverJob = {
   text: string;
   hostedUrl: string;
   createdAt?: number;
-  categories?: { location?: string; allLocations?: string[]; commitment?: string };
+  categories?: { location?: string; allLocations?: string[]; commitment?: string; team?: string; department?: string };
+  salaryRange?: { min?: number; max?: number; currency?: string; interval?: string };
   workplaceType?: string;
   descriptionPlain?: string;
   additionalPlain?: string;
 };
+
+export function leverPay(j: LeverJob): Pay | null {
+  const r = j.salaryRange;
+  if (!r?.min || r.min <= 0) return null;
+  const unit = unitFrom(r.interval);
+  if (!unit) return null;
+  return { min: r.min, max: Math.max(r.min, r.max ?? r.min), unit, currency: (r.currency ?? "USD").slice(0, 3), source: "ats" };
+}
 
 export const lever: Adapter<LeverJob> = {
   ats: "lever",
@@ -38,6 +48,8 @@ export const lever: Adapter<LeverJob> = {
       remote: j.workplaceType ? j.workplaceType === "remote" : loc ? /remote/i.test(loc) : null,
       sourcePostedAt: toEpochMs(j.createdAt ?? null),
       descriptionText: desc || null,
+      department: j.categories?.team || j.categories?.department || null,
+      pay: leverPay(j),
     };
   },
 };

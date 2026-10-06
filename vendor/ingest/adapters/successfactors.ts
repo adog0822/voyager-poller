@@ -5,7 +5,7 @@ import { decodeEntities, htmlToText } from "../text.ts";
 //   GET https://{host}/sitemap.xml  → RSS 2.0 feed of every live job, with descriptions.
 //   Some sites serve a standard <urlset> there and the RSS feed at /sitemal.xml instead.
 // The /services/rss/job/ feed is robots-disallowed on these sites, so we use the sitemaps.
-// Items carry no publish date: `first_seen_at` is the freshness signal.
+// Items carry no publish date; the detail page has <meta itemprop="datePosted">.
 
 export type SfItem = { id: string; title: string; link: string; location: string | null; description: string | null };
 
@@ -15,6 +15,18 @@ function tag(xml: string, name: string): string | null {
   const v = m[1].trim();
   const cdata = v.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
   return cdata ? cdata[1] : decodeEntities(v);
+}
+
+/** "Fri Sep 25 02:00:00 UTC 2026" (Java Date.toString) or ISO → epoch ms. */
+export function parseSfDate(s: string | null): number | null {
+  if (!s) return null;
+  const j = s.match(/^\w{3} (\w{3}) (\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (?:UTC|GMT) (\d{4})$/);
+  if (j) {
+    const t = Date.parse(`${j[1]} ${j[2]}, ${j[6]} ${j[3]}:${j[4]}:${j[5]} UTC`);
+    return Number.isFinite(t) ? t : null;
+  }
+  const t = Date.parse(s);
+  return Number.isFinite(t) && t > 0 ? t : null;
 }
 
 export function parseSfSitemap(xml: string): SfItem[] {
@@ -70,5 +82,13 @@ export const successfactors: Adapter<SfItem> = {
       sourcePostedAt: null,
       descriptionText: htmlToText(it.description),
     };
+  },
+
+  async fetchDetail(_src, posting, ctx) {
+    const res = await ctx.fetch(posting.url, { signal: ctx.signal, headers: { Accept: "text/html" } });
+    if (!res.ok) throw new AdapterError(`successfactors detail ${res.status}`, "successfactors", res.status);
+    const html = (await res.text()).slice(0, 400_000);
+    const m = html.match(/itemprop="datePosted"[^<>]{0,40}content="([^"]{6,60})"|content="([^"]{6,60})"[^<>]{0,40}itemprop="datePosted"/);
+    return { sourcePostedAt: parseSfDate(m?.[1] ?? m?.[2] ?? null) };
   },
 };

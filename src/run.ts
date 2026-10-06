@@ -9,13 +9,16 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createPoliteFetch,
   enrich,
+  extractDetails,
   listCandidates,
+  MAX_ENRICHED_PER_REQUEST,
   MAX_DESCRIPTION_CHARS,
   MAX_POSTINGS_PER_REQUEST,
   PollPlan,
   RobotsDisallowedError,
   sha256Hex,
   signRequest,
+  type Enriched,
   type IngestBody,
   type NormalizedPosting,
   type PlanSource,
@@ -117,7 +120,9 @@ async function main() {
           enrichLeft--;
           out = await enrich(cfg, p, { fetch, signal }).catch(() => p);
         }
-        postings.push({ ...out, descriptionText: out.descriptionText?.slice(0, MAX_DESCRIPTION_CHARS) ?? null });
+        // Facts are extracted here (no CPU limit), from the full description; only the facts travel.
+        const details = extractDetails({ title: out.title, description: out.descriptionText, department: out.department, structuredPay: out.pay });
+        postings.push({ ...out, details, descriptionText: out.descriptionText?.slice(0, MAX_DESCRIPTION_CHARS) ?? null });
       }
       changed.push({ src, postings, next: { hash, ids: sorted.map((p) => p.externalId) } });
     } catch (err) {
@@ -125,6 +130,38 @@ async function main() {
       failures.push({ sourceId: src.id, error: String((err as Error).message ?? err).slice(0, 300), robotsDisallowed: robots });
     }
   });
+
+  // Enrichment: existing open co-ops still missing a date or details (backfill rows, earlier
+  // failures). Whatever detail budget the new postings left over goes here.
+  const enrichedItems: Enriched[] = [];
+  await pool(plan.enrich.slice(0, Math.max(0, enrichLeft)), Math.min(CONCURRENCY, 8), async (t) => {
+    enrichLeft--;
+    const cfg: SourceConfig = {
+      id: t.source.id,
+      ats: t.source.ats as SourceConfig["ats"],
+      boardToken: t.source.boardToken,
+      config: t.source.config,
+      careersUrl: t.source.careersUrl ?? null,
+    };
+    const base: NormalizedPosting = { externalId: t.externalId, title: t.title, url: t.url, location: t.location, remote: null, sourcePostedAt: t.sourcePostedAt, descriptionText: null };
+    try {
+      const out = await enrich(cfg, base, { fetch, signal: AbortSignal.timeout(30_000) });
+      const details = extractDetails({ title: out.title, description: out.descriptionText, department: out.department, structuredPay: out.pay });
+      enrichedItems.push({ postingId: t.postingId, sourcePostedAt: out.sourcePostedAt, location: out.location, details });
+    } catch {
+      enrichedItems.push({ postingId: t.postingId, sourcePostedAt: null, location: null, details: null });
+    }
+  });
+  let enrichedSent = 0;
+  for (let i = 0; i < enrichedItems.length; i += MAX_ENRICHED_PER_REQUEST) {
+    const items = enrichedItems.slice(i, i + MAX_ENRICHED_PER_REQUEST);
+    try {
+      await signedFetch("POST", "/api/ingest/enriched", { runId: plan.runId, items });
+      enrichedSent += items.length;
+    } catch (err) {
+      console.error(`enriched request failed (${String((err as Error).message).match(/-> (\d{3})/)?.[1] ?? "network"})`);
+    }
+  }
 
   // Pack changed sources into requests of <= 50 postings / <= 100 sources.
   // A source with > 50 candidates is split; only its final chunk carries fullIdList.
@@ -195,7 +232,7 @@ async function main() {
     [
       `polled=${plan.sources.length} ok=${okSourceIds.length} failed=${failures.length} (robots=${robots})`,
       `listed=${listed} changed=${changed.length} requests=${requests.length} inserted=${inserted}`,
-      `deferred=${deferred.size} sendFailures=${failedSend.size} enrichUsed=${ENRICH_BUDGET - enrichLeft}`,
+      `deferred=${deferred.size} sendFailures=${failedSend.size} enrichUsed=${ENRICH_BUDGET - enrichLeft} enrichedSent=${enrichedSent}/${plan.enrich.length}`,
       `took=${Math.round((Date.now() - startedAt) / 1000)}s`,
     ].join("\n"),
   );
