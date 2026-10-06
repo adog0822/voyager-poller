@@ -17,7 +17,9 @@ function host(careersUrl: string | null | undefined, boardToken: string) {
 
 export function parseIcimsSearch(html: string, baseUrl: string): IcimsJob[] {
   const jobs = new Map<string, IcimsJob>();
+  const host = new URL(baseUrl).host;
   for (const a of extractAnchors(html, JOB_HREF, baseUrl)) {
+    if (new URL(a.href).host !== host) continue; // same-site job links only
     const id = a.href.match(/\/jobs\/(\d+)\//)?.[1];
     const title = a.text.replace(/^Title\s+/i, "").trim();
     if (!id || !title || jobs.has(id)) continue;

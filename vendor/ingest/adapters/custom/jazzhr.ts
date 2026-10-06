@@ -8,8 +8,10 @@ export type JazzJob = { id: string; title: string; url: string; location: string
 
 export function parseJazzList(html: string, baseUrl: string): JazzJob[] {
   const out = new Map<string, JazzJob>();
-  for (const item of html.matchAll(/<li class="list-group-item">([\s\S]*?)<\/li>\s*(?=<li class="list-group-item">|<\/ul>)/gi)) {
-    const [a] = extractAnchors(item[1], /applytojob\.com\/apply\/[A-Za-z0-9]+\//, baseUrl);
+  for (const item of html.matchAll(/<li class="list-group-item">([\s\S]{0,6000}?)<\/li>\s*(?=<li class="list-group-item">|<\/ul>)/gi)) {
+    // Anchored to the board's own host: an href like "javascript:…//applytojob.com/apply/x/" is rejected.
+    const host = new URL(baseUrl).host.replace(/\./g, "\\.");
+    const [a] = extractAnchors(item[1], new RegExp(`^https://${host}/apply/[A-Za-z0-9]+/`), baseUrl);
     if (!a) continue;
     const id = a.href.match(/\/apply\/([A-Za-z0-9]+)\//)?.[1];
     const loc = item[1].match(/fa-map-marker[^>]*><\/i>([^<]*)/i);

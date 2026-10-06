@@ -9,7 +9,12 @@ export type RobotsRules = {
 export const ALLOW_ALL: RobotsRules = { rules: [], crawlDelaySec: null };
 export const DISALLOW_ALL: RobotsRules = { rules: [{ allow: false, pattern: "/" }], crawlDelaySec: null };
 
+/** RFC 9309: parse at most 500 KiB. Rules longer than this are ignored. */
+const MAX_ROBOTS_CHARS = 500 * 1024;
+const MAX_RULE_CHARS = 512;
+
 export function parseRobots(txt: string, userAgentToken: string): RobotsRules {
+  txt = txt.slice(0, MAX_ROBOTS_CHARS);
   const token = userAgentToken.toLowerCase();
   type Group = { agents: string[]; rules: RobotsRules["rules"]; crawlDelaySec: number | null };
   const groups: Group[] = [];
@@ -34,7 +39,7 @@ export function parseRobots(txt: string, userAgentToken: string): RobotsRules {
     lastWasAgent = false;
     if (!current) continue;
     if (key === "allow" || key === "disallow") {
-      if (value === "") continue; // "Disallow:" (empty) = allow everything
+      if (value === "" || value.length > MAX_RULE_CHARS) continue; // "Disallow:" (empty) = allow everything
       current.rules.push({ allow: key === "allow", pattern: value });
     } else if (key === "crawl-delay") {
       const n = Number(value);
@@ -51,20 +56,35 @@ export function parseRobots(txt: string, userAgentToken: string): RobotsRules {
   };
 }
 
-function patternToRegex(pattern: string): RegExp {
+/**
+ * Linear-time robots.txt pattern match (`*` = any run, trailing `$` = end anchor).
+ * No regex: patterns come from untrusted sites, and wildcard→regex conversion backtracks
+ * catastrophically on inputs like "/**********Z$" (seconds to minutes per check).
+ */
+export function matchesPattern(pattern: string, path: string): boolean {
   const anchored = pattern.endsWith("$");
-  const body = (anchored ? pattern.slice(0, -1) : pattern)
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${body}${anchored ? "$" : ""}`);
+  const parts = (anchored ? pattern.slice(0, -1) : pattern).split("*");
+  // First segment must be a prefix.
+  if (!path.startsWith(parts[0])) return false;
+  let pos = parts[0].length;
+  // Middle segments: greedy-leftmost search is optimal for "*" gaps.
+  for (let i = 1; i < parts.length - 1; i++) {
+    if (!parts[i]) continue;
+    const at = path.indexOf(parts[i], pos);
+    if (at < 0) return false;
+    pos = at + parts[i].length;
+  }
+  if (parts.length === 1) return anchored ? path.length === pos : true;
+  const last = parts[parts.length - 1];
+  if (anchored) return path.length - last.length >= pos && path.endsWith(last);
+  return last === "" || path.indexOf(last, pos) >= 0;
 }
 
 /** `path` includes the query string, e.g. "/jobs?x=1". */
 export function isPathAllowed(robots: RobotsRules, path: string): boolean {
   let best: { allow: boolean; len: number } | null = null;
   for (const r of robots.rules) {
-    if (!patternToRegex(r.pattern).test(path)) continue;
+    if (!matchesPattern(r.pattern, path)) continue;
     const len = r.pattern.length;
     // Longest match wins; on a tie, Allow wins (RFC 9309 §2.2.2).
     if (!best || len > best.len || (len === best.len && r.allow)) best = { allow: r.allow, len };

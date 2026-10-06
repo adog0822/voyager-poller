@@ -11,16 +11,18 @@ export type SourceConfig = {
   careersUrl?: string | null;
 };
 
+// Untrusted career-site content: http(s) URLs only (no javascript:/data:/file:) and
+// bounded field sizes, so one hostile board can't bloat requests, rows or queue messages.
 export const NormalizedPosting = z.object({
-  externalId: z.string().min(1),
-  title: z.string().min(1),
-  url: z.url(),
-  location: z.string().nullable(),
+  externalId: z.string().min(1).max(200),
+  title: z.string().min(1).max(300),
+  url: z.url({ protocol: /^https?$/ }).max(2048),
+  location: z.string().max(300).nullable(),
   remote: z.boolean().nullable(),
   /** Epoch ms from the source, or null if the source doesn't expose one (then `first_seen_at` is the truth). */
   sourcePostedAt: z.number().int().positive().nullable(),
   /** Plain text, only when the list or detail call provided it. */
-  descriptionText: z.string().nullable().optional(),
+  descriptionText: z.string().max(20_000).nullable().optional(),
 });
 export type NormalizedPosting = z.infer<typeof NormalizedPosting>;
 

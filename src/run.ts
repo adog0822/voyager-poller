@@ -32,6 +32,7 @@ const CONCURRENCY = Number(process.env.CONCURRENCY || 16);
 const ENRICH_BUDGET = Number(process.env.ENRICH_BUDGET || 400); // detail calls per run
 const SOURCE_TIMEOUT_MS = 120_000;
 const MAX_SOURCES_PER_REQUEST = 100;
+const MAX_REQUEST_BYTES = 800_000; // Worker refuses bodies over 1 MB
 
 type SourceState = { hash: string; ids: string[] };
 type State = { v: 1; sources: Record<string, SourceState> };
@@ -130,19 +131,24 @@ async function main() {
   const requests: IngestBody["sources"][] = [];
   let cur: IngestBody["sources"] = [];
   let curPostings = 0;
+  let curBytes = 0;
   const flush = () => {
     if (cur.length) requests.push(cur);
     cur = [];
     curPostings = 0;
+    curBytes = 0;
   };
   for (const c of changed) {
     const chunks: NormalizedPosting[][] = [];
     for (let i = 0; i < c.postings.length; i += MAX_POSTINGS_PER_REQUEST) chunks.push(c.postings.slice(i, i + MAX_POSTINGS_PER_REQUEST));
     if (!chunks.length) chunks.push([]);
     chunks.forEach((chunk, i) => {
-      if (curPostings + chunk.length > MAX_POSTINGS_PER_REQUEST || cur.length >= MAX_SOURCES_PER_REQUEST) flush();
-      cur.push({ sourceId: c.src.id, postings: chunk, ...(i === chunks.length - 1 ? { fullIdList: c.next.ids } : {}) });
+      const entry = { sourceId: c.src.id, postings: chunk, ...(i === chunks.length - 1 ? { fullIdList: c.next.ids } : {}) };
+      const size = Buffer.byteLength(JSON.stringify(entry));
+      if (curPostings + chunk.length > MAX_POSTINGS_PER_REQUEST || cur.length >= MAX_SOURCES_PER_REQUEST || curBytes + size > MAX_REQUEST_BYTES) flush();
+      cur.push(entry);
       curPostings += chunk.length;
+      curBytes += size;
     });
   }
   flush();
@@ -161,7 +167,7 @@ async function main() {
       inserted += res.inserted;
       res.deferredSourceIds.forEach((id) => deferred.add(id));
     } catch (err) {
-      console.error(`ingest request failed: ${(err as Error).message}`);
+      console.error(`ingest request failed (${String((err as Error).message).match(/-> (\d{3})/)?.[1] ?? "network"})`);
       sources.forEach((s) => failedSend.add(s.sourceId));
     }
   }
@@ -193,11 +199,18 @@ async function main() {
       `took=${Math.round((Date.now() - startedAt) / 1000)}s`,
     ].join("\n"),
   );
-  // Show a sample of failures to make broken sources easy to spot in the Actions log.
-  for (const f of failures.slice(0, 15)) console.log(`  fail source=${f.sourceId}: ${f.error}`);
+  // This repo's Actions logs are public: summarize failure kinds only (details go to the
+  // Worker's run summary, which is private).
+  const kinds = failures.reduce<Record<string, number>>((m, f) => {
+    const k = f.robotsDisallowed ? "robots" : (f.error.match(/\b(\d{3})\b/)?.[1] ?? f.error.split(/[\s:]/)[0]);
+    m[k] = (m[k] ?? 0) + 1;
+    return m;
+  }, {});
+  if (failures.length) console.log(`failure kinds: ${JSON.stringify(kinds)}`);
 }
 
 main().catch((err) => {
-  console.error(err);
+  // Message only: a full error (with cause) could print the private ingest hostname.
+  console.error(`poller failed: ${(err as Error).name}: ${String((err as Error).message).replace(/https?:\/\/[^\s/]+/g, "<host>")}`);
   process.exit(1);
 });

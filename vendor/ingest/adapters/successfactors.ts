@@ -10,7 +10,7 @@ import { decodeEntities, htmlToText } from "../text.ts";
 export type SfItem = { id: string; title: string; link: string; location: string | null; description: string | null };
 
 function tag(xml: string, name: string): string | null {
-  const m = xml.match(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`));
+  const m = xml.match(new RegExp(`<${name}(?:\\s[^<>]*)?>([\\s\\S]{0,65536}?)</${name}>`));
   if (!m) return null;
   const v = m[1].trim();
   const cdata = v.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
@@ -19,8 +19,15 @@ function tag(xml: string, name: string): string | null {
 
 export function parseSfSitemap(xml: string): SfItem[] {
   const items: SfItem[] = [];
-  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-    const it = m[1];
+  // indexOf split (a regex span over an unclosed <item> would be quadratic); items capped at 64 KB.
+  let from = 0;
+  for (;;) {
+    const start = xml.indexOf("<item>", from);
+    if (start < 0) break;
+    const end = xml.indexOf("</item>", start);
+    if (end < 0) break;
+    from = end + 7;
+    const it = xml.slice(start + 6, Math.min(end, start + 6 + 65_536));
     const link = tag(it, "link");
     const id = tag(it, "g:id") ?? tag(it, "guid") ?? link;
     const title = tag(it, "title");

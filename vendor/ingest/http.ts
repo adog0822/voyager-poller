@@ -10,6 +10,52 @@ export type PoliteFetchInit = RequestInit & {
 };
 export type PoliteFetch = (url: string, init?: PoliteFetchInit) => Promise<Response>;
 
+export class BlockedUrlError extends Error {
+  readonly url: string;
+  constructor(url: string, why: string) {
+    super(`blocked url (${why}): ${url}`);
+    this.name = "BlockedUrlError";
+    this.url = url;
+  }
+}
+
+/**
+ * SSRF guard: public http(s) hosts only. Hostnames come from scraped career pages, so
+ * loopback, private, link-local (cloud metadata), CGNAT and .internal/.local names are refused.
+ */
+export function assertPublicUrl(raw: string): URL {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new BlockedUrlError(raw, "unparseable");
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new BlockedUrlError(raw, "scheme");
+  if (u.username || u.password) throw new BlockedUrlError(raw, "credentials");
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal") || !h.includes(".") && !h.includes(":")) {
+    throw new BlockedUrlError(raw, "local hostname");
+  }
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224) {
+      throw new BlockedUrlError(raw, "private address");
+    }
+  }
+  if (h.includes(":") && (h === "::1" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80") || h.startsWith("::ffff:") || h === "::")) {
+    throw new BlockedUrlError(raw, "private address");
+  }
+  return u;
+}
+
+export class ResponseTooLargeError extends Error {
+  constructor(url: string, max: number) {
+    super(`response over ${max} bytes: ${url}`);
+    this.name = "ResponseTooLargeError";
+  }
+}
+
 export class RobotsDisallowedError extends Error {
   readonly url: string;
   constructor(url: string) {
@@ -30,6 +76,8 @@ export type PoliteFetchOptions = {
   maxRetries?: number;
   respectRobots?: boolean;
   fetchImpl?: typeof fetch;
+  /** Responses larger than this are refused (parsers run on the whole body). */
+  maxBodyBytes?: number;
   /**
    * Rate-limit bucket for a host. Multi-tenant platforms give every company its own
    * hostname but share infrastructure (and rate limits), so they share one bucket.
@@ -68,6 +116,7 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
     fetchImpl = fetch,
     hostGroup = defaultHostGroup,
     groupLimits = DEFAULT_GROUP_LIMITS,
+    maxBodyBytes = 8 * 1024 * 1024,
   } = opts;
 
   const robotsCache = new Map<string, Promise<RobotsRules>>();
@@ -106,7 +155,40 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
     const signal = init.signal
       ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
       : AbortSignal.timeout(timeoutMs);
-    return fetchImpl(url, { ...init, headers, signal, redirect: "follow" });
+    // Redirects are followed manually (below) so every hop is SSRF- and robots-checked.
+    return fetchImpl(url, { ...init, headers, signal, redirect: "manual" });
+  }
+
+  /** Buffer the body with a running byte count; refuse anything over maxBodyBytes. */
+  async function capped(res: Response, url: string, max = maxBodyBytes): Promise<Response> {
+    const declared = Number(res.headers.get("content-length") ?? 0);
+    if (declared > max) {
+      await res.body?.cancel();
+      throw new ResponseTooLargeError(url, max);
+    }
+    if (!res.body) return res;
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > max) {
+        await reader.cancel();
+        throw new ResponseTooLargeError(url, max);
+      }
+      chunks.push(value);
+    }
+    const body = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) {
+      body.set(c, off);
+      off += c.byteLength;
+    }
+    const out = new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+    Object.defineProperty(out, "url", { value: url });
+    return out;
   }
 
   function robotsFor(origin: string): Promise<RobotsRules> {
@@ -114,13 +196,20 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
     if (!p) {
       p = (async () => {
         try {
-          const res = await rawFetch(`${origin}/robots.txt`, { headers: { Accept: "text/plain" } });
+          let res = await rawFetch(`${origin}/robots.txt`, { headers: { Accept: "text/plain" } });
+          // RFC 9309: follow up to 5 redirects (each target SSRF-checked).
+          for (let hop = 0; hop < 5 && res.status >= 300 && res.status < 400 && res.headers.get("location"); hop++) {
+            const next = assertPublicUrl(new URL(res.headers.get("location")!, `${origin}/robots.txt`).toString());
+            await res.body?.cancel();
+            res = await rawFetch(next.toString(), { headers: { Accept: "text/plain" } });
+          }
           // RFC 9309: 4xx = no restrictions; 5xx/unreachable = assume full disallow.
           if (res.status >= 400 && res.status < 500) return ALLOW_ALL;
           if (!res.ok) return DISALLOW_ALL;
           const type = res.headers.get("content-type") ?? "";
           if (type.includes("html")) return ALLOW_ALL; // soft-404 HTML page, not a robots file
-          return parseRobots(await res.text(), robotsToken);
+          // Oversized robots.txt → treated as unreachable (full disallow): conservative.
+          return parseRobots(await (await capped(res, `${origin}/robots.txt`, 1024 * 1024)).text(), robotsToken);
         } catch {
           return DISALLOW_ALL;
         }
@@ -130,19 +219,19 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
     return p;
   }
 
-  return async function politeFetch(url, init = {}) {
-    const { alsoRequirePaths, ...reqInit } = init;
-    const u = new URL(url);
-    if (respectRobots) {
-      const robots = await robotsFor(u.origin);
-      const paths = [u.pathname + u.search, ...(alsoRequirePaths ?? [])];
-      if (!paths.every((p) => isPathAllowed(robots, p))) throw new RobotsDisallowedError(url);
-      if (robots.crawlDelaySec) {
-        const h = hostState(hostGroup(u.host));
-        h.gapMs = Math.max(h.gapMs, robots.crawlDelaySec * 1000);
-      }
+  async function checkRobots(u: URL, extraPaths: string[] = []) {
+    if (!respectRobots) return;
+    const robots = await robotsFor(u.origin);
+    const paths = [u.pathname + u.search, ...extraPaths];
+    if (!paths.every((p) => isPathAllowed(robots, p))) throw new RobotsDisallowedError(u.toString());
+    if (robots.crawlDelaySec) {
+      const h = hostState(hostGroup(u.host));
+      h.gapMs = Math.max(h.gapMs, Math.min(robots.crawlDelaySec, 30) * 1000);
     }
+  }
 
+  async function fetchOnce(url: string, reqInit: RequestInit): Promise<Response> {
+    const u = new URL(url);
     const bucket = hostGroup(u.host);
     for (let attempt = 0; ; attempt++) {
       await acquire(bucket);
@@ -151,7 +240,7 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
         res = await rawFetch(url, reqInit);
       } catch (err) {
         release(bucket);
-        if (attempt >= maxRetries || (err as Error).name === "AbortError") throw err;
+        if (attempt >= maxRetries || (err as Error).name === "AbortError" || (err as Error).name === "TimeoutError") throw err;
         await sleep(500 * 2 ** attempt);
         continue;
       }
@@ -167,5 +256,26 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
       }
       return res;
     }
+  }
+
+  return async function politeFetch(url, init = {}) {
+    const { alsoRequirePaths, ...reqInit } = init;
+    let current = assertPublicUrl(url);
+    await checkRobots(current, alsoRequirePaths);
+    for (let hop = 0; hop <= 5; hop++) {
+      const res = await fetchOnce(current.toString(), reqInit);
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+      if (!location) return capped(res, current.toString());
+      await res.body?.cancel();
+      const next = assertPublicUrl(new URL(location, current).toString());
+      if (next.origin !== current.origin) await checkRobots(next);
+      // 303 (and 301/302 after POST, per browsers) become GET without a body.
+      if (res.status === 303 || ((res.status === 301 || res.status === 302) && reqInit.method && reqInit.method !== "GET")) {
+        reqInit.method = "GET";
+        delete reqInit.body;
+      }
+      current = next;
+    }
+    throw new BlockedUrlError(url, "too many redirects");
   };
 }
