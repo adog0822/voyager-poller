@@ -9,5 +9,6 @@ export { enrich, listCandidates, type CandidateResult } from "./poll.ts";
 export { isPathAllowed, parseRobots } from "./robots.ts";
 export { AdapterError, NormalizedPosting, type Adapter, type FetchContext, type SourceConfig } from "./types.ts";
 export * from "./protocol.ts";
+export { regionOf, type Region } from "./region.ts";
 export { companyFacts, type CompanyFacts } from "./wikidata.ts";
 export { sha256Hex, SIG_HEADER, signRequest, TS_HEADER, verifyRequest } from "./sign.ts";
