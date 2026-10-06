@@ -116,7 +116,9 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
     fetchImpl = fetch,
     hostGroup = defaultHostGroup,
     groupLimits = DEFAULT_GROUP_LIMITS,
-    maxBodyBytes = 8 * 1024 * 1024,
+    // Real full-text feeds (SuccessFactors sitemaps, large Lever boards) exceed 8 MB; parsers
+    // are linear-time, so the cap only has to stop unbounded downloads.
+    maxBodyBytes = 40 * 1024 * 1024,
   } = opts;
 
   const robotsCache = new Map<string, Promise<RobotsRules>>();
