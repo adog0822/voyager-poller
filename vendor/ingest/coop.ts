@@ -36,6 +36,8 @@ const SEASON = /\b(spring|summer|fall|autumn|winter)\b/i;
 // Role duration only: "6-month", "6 month co-op", "for 6 months", "(8 Months)". Not
 // "graduating within 6 months" or "6 months of experience".
 const N = "(4|four|6|six|8|eight)";
+// UK/EU industrial placements: 12 months, not an NU co-op (4/6/8 months).
+const PLACEMENT_YEAR = /\b(placement year|year[- ]long placement|industrial placement|sandwich (year|placement)|12[- ]month (placement|internship))\b/i;
 const DURATION = new RegExp(
   [
     `\\b${N}-months?\\b`,
@@ -109,6 +111,10 @@ export function classifyRules(input: { title: string; description?: string | nul
       confidence += 0.1;
       signals.push("desc:northeastern");
     }
+  }
+  if (PLACEMENT_YEAR.test(title) && !COOP_WORD.test(title)) {
+    confidence = 0.1;
+    signals.push("placement-year");
   }
   confidence = Math.min(1, Math.round(confidence * 100) / 100);
 
