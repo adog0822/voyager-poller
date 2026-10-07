@@ -2,7 +2,7 @@ export { adapters } from "./adapters/index.ts";
 export { SUPPORTED_CUSTOM_PLATFORMS, type CustomPlatformName } from "./adapters/custom/index.ts";
 export { parsePostedOn } from "./adapters/workday.ts";
 export { classifyField, extractDetails, FIELD_LABELS, FIELDS, toHourly, Details, Pay, type Field, type PayUnit } from "./details.ts";
-export { classifyRules, prefilter, type Cycle, type RuleResult } from "./coop.ts";
+export { classifyRules, coopFit, prefilter, type Cycle, type RuleResult } from "./coop.ts";
 export { fingerprint, normalizeUrl, NON_PUBLIC_WORKDAY_SITE, type ApiAts, type Fingerprint } from "./fingerprint.ts";
 export { assertPublicUrl, BlockedUrlError, createPoliteFetch, defaultHostGroup, ResponseTooLargeError, RobotsDisallowedError, type PoliteFetch } from "./http.ts";
 export { enrich, listCandidates, type CandidateResult } from "./poll.ts";

@@ -147,3 +147,28 @@ export function classifyRules(input: { title: string; description?: string | nul
 
   return { isCoop: confidence >= 0.6, confidence, cycle, cycleYear, durationMonths, signals };
 }
+
+const TERM_START_MONTH: Record<Exclude<Cycle, "unknown">, number> = { spring: 1, summer: 5, fall: 7 };
+const OFF_CYCLE = /\boff[- ]?cycle\b/i;
+
+/**
+ * An internship that isn't called a co-op but fits one: an NU-length term (4/6/8 months), a
+ * spring/fall term that hasn't started yet, or an off-cycle internship. Students can use these as
+ * self-developed co-ops with their advisor's approval. Standard 10–12 week summer internships,
+ * year-long placements and terms already under way don't count.
+ */
+export function coopFit(title: string, rules: RuleResult, now = Date.now()): boolean {
+  if (rules.isCoop || rules.signals.includes("placement-year")) return false;
+  if (!INTERN_WORD.test(title)) return false;
+  const d = new Date(now);
+  const termStarted = (cycle: Cycle, year: number | null) =>
+    cycle !== "unknown" && year !== null && Date.UTC(year, TERM_START_MONTH[cycle] - 1, 1) < Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+  if (termStarted(rules.cycle, rules.cycleYear)) return false;
+  // Summer roles are 10–12 week internships unless clearly longer (a June–August range rounds
+  // up to "4 months", so it can't count).
+  if (rules.cycle === "summer") return (rules.durationMonths ?? 0) >= 6;
+  if (rules.durationMonths) return true;
+  if (OFF_CYCLE.test(title)) return true;
+  // A season alone is enough only with a year (so we can tell it's upcoming), and never summer.
+  return (rules.cycle === "spring" || rules.cycle === "fall") && rules.cycleYear !== null;
+}
