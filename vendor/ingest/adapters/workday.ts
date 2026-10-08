@@ -35,7 +35,9 @@ export function parsePostedOn(text: string | undefined, now: number): number | n
 function base(src: SourceConfig) {
   const { tenant, wd, site } = src.config;
   if (!tenant || !wd || !site) throw new AdapterError(`bad workday config ${src.boardToken}`, "workday");
-  return { origin: `https://${tenant}.${wd}.myworkdayjobs.com`, tenant, site };
+  // The JSON API names the tenant with underscores where its hostname has hyphens
+  // (host vhr-genband → /wday/cxs/vhr_genband/...).
+  return { origin: `https://${tenant}.${wd}.myworkdayjobs.com`, tenant: tenant.replace(/-/g, "_"), site };
 }
 
 export const workday: Adapter<WorkdayJob> = {

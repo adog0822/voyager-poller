@@ -100,7 +100,8 @@ export function fingerprint(raw: string): Fingerprint | null {
     return {
       ats: "lever",
       boardToken: site,
-      config: { region },
+      // Original case: Lever's API is case-sensitive.
+      config: { region, site: parts[0] },
       careersUrl: `https://${host}/${site}`,
     };
   }

@@ -30,7 +30,9 @@ export const lever: Adapter<LeverJob> = {
 
   async fetchList(src, ctx) {
     const host = src.config.region === "eu" ? "api.eu.lever.co" : "api.lever.co";
-    const res = await ctx.fetch(`https://${host}/v0/postings/${src.boardToken}?mode=json`, { signal: ctx.signal });
+    // Lever site names are case-sensitive ("AIFund"); boardToken is lowercased for uniqueness.
+    const site = src.config.site ?? src.boardToken;
+    const res = await ctx.fetch(`https://${host}/v0/postings/${encodeURIComponent(site)}?mode=json`, { signal: ctx.signal });
     if (!res.ok) throw new AdapterError(`lever ${res.status} ${src.boardToken}`, "lever", res.status);
     const body = await res.json();
     if (!Array.isArray(body)) throw new AdapterError(`lever unexpected body ${src.boardToken}`, "lever");
