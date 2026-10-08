@@ -2,13 +2,14 @@ import { AdapterError, type Adapter, type SourceConfig } from "../../types.ts";
 import { amazon } from "./amazon.ts";
 import { icims } from "./icims.ts";
 import { jazzhr } from "./jazzhr.ts";
+import { jibe } from "./jibe.ts";
 import { jobvite } from "./jobvite.ts";
 import { microsoft } from "./microsoft.ts";
 
 // `ats = "custom"` sources pick an implementation by `config.platform`.
 // Not supported (stay disabled): taleo (portal-id REST), smartrecruiters (robots),
 // avature/wayfair (robots + bot protection), unknown one-off sites.
-export const CUSTOM_PLATFORMS = { amazon, microsoft, icims, jobvite, jazzhr } as const;
+export const CUSTOM_PLATFORMS = { amazon, microsoft, icims, jobvite, jazzhr, jibe } as const;
 export type CustomPlatformName = keyof typeof CUSTOM_PLATFORMS;
 export const SUPPORTED_CUSTOM_PLATFORMS = Object.keys(CUSTOM_PLATFORMS) as CustomPlatformName[];
 

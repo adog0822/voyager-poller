@@ -17,6 +17,7 @@ export type CustomPlatform =
   | "amazon"
   | "microsoft"
   | "jazzhr"
+  | "jibe"
   | "icims"
   | "taleo"
   | "jobvite"
@@ -205,6 +206,11 @@ export function fingerprint(raw: string): Fingerprint | null {
     // robots.txt disallows crawling SmartRecruiters: track via the company's own site.
     const id = parts[0] ?? "unknown";
     return custom("smartrecruiters", null, `smartrecruiters:${id.toLowerCase()}`, "smartrecruiters-needs-company-careers-url");
+  }
+  // Jibe (iCIMS front-end) on {company}.jibeapply.com or the company's own domain (marked
+  // with ats=jibe). Listings come from {origin}/api/jobs on that same front-end.
+  if (host.endsWith(".jibeapply.com") || url.searchParams.get("ats") === "jibe") {
+    return custom("jibe", url.origin, `jibe:${host.replace(/^www\./, "")}`);
   }
   // SAP SuccessFactors Recruiting Marketing sites live on company domains; the
   // `ats=successfactors` marker identifies them. They expose /services/rss/job/.
