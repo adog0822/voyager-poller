@@ -1,4 +1,5 @@
 import { AdapterError, type Adapter, type FetchContext, type SourceConfig } from "../types.ts";
+import { prefilter } from "../coop.ts";
 import { htmlToText, toEpochMs } from "../text.ts";
 
 // Unofficial but public career-site JSON (the same calls the Workday careers page makes).
@@ -45,6 +46,8 @@ export const workday: Adapter<WorkdayJob> = {
     const url = `${origin}/wday/cxs/${tenant}/${site}/jobs`;
     const seen = new Map<string, WorkdayJob>();
     for (const searchText of SEARCH_TERMS) {
+      // Workday returns `total` on the first page only (later pages say 0), so keep it.
+      let total = Infinity;
       for (let page = 0; page < MAX_PAGES; page++) {
         const res = await ctx.fetch(url, {
           method: "POST",
@@ -57,8 +60,11 @@ export const workday: Adapter<WorkdayJob> = {
         if (!res.ok) throw new AdapterError(`workday ${res.status} ${src.boardToken}`, "workday", res.status);
         const body = (await res.json()) as { total?: number; jobPostings?: WorkdayJob[] };
         const jobs = body.jobPostings ?? [];
+        if (page === 0) total = body.total ?? Infinity;
         for (const j of jobs) if (j.externalPath) seen.set(j.externalPath, j);
-        if (jobs.length < PAGE || (page + 1) * PAGE >= (body.total ?? 0)) break;
+        if (jobs.length < PAGE || (page + 1) * PAGE >= total) break;
+        // Results are relevance-ordered: a page with no student roles means the tail is noise.
+        if (!jobs.some((j) => prefilter(j.title))) break;
       }
     }
     return [...seen.values()];
