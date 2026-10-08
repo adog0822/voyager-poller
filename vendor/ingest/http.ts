@@ -1,4 +1,4 @@
-import { ALLOW_ALL, DISALLOW_ALL, isPathAllowed, parseRobots, type RobotsRules } from "./robots.ts";
+import { ALLOW_ALL, isPathAllowed, isPathAllowedIgnoreCase, parseRobots, UNREACHABLE, type RobotsRules } from "./robots.ts";
 
 export type PoliteFetchInit = RequestInit & {
   /**
@@ -53,6 +53,16 @@ export class ResponseTooLargeError extends Error {
   constructor(url: string, max: number) {
     super(`response over ${max} bytes: ${url}`);
     this.name = "ResponseTooLargeError";
+  }
+}
+
+/** robots.txt couldn't be fetched (server error, network). Retried next run, never a permanent block. */
+export class RobotsUnavailableError extends Error {
+  readonly url: string;
+  constructor(url: string) {
+    super(`robots.txt unreachable for ${url}`);
+    this.name = "RobotsUnavailableError";
+    this.url = url;
   }
 }
 
@@ -205,15 +215,15 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
             await res.body?.cancel();
             res = await rawFetch(next.toString(), { headers: { Accept: "text/plain" } });
           }
-          // RFC 9309: 4xx = no restrictions; 5xx/unreachable = assume full disallow.
+          // RFC 9309: 4xx = no restrictions; 5xx/unreachable = assume full disallow (for now).
           if (res.status >= 400 && res.status < 500) return ALLOW_ALL;
-          if (!res.ok) return DISALLOW_ALL;
+          if (!res.ok) return UNREACHABLE;
           const type = res.headers.get("content-type") ?? "";
           if (type.includes("html")) return ALLOW_ALL; // soft-404 HTML page, not a robots file
           // Oversized robots.txt → treated as unreachable (full disallow): conservative.
           return parseRobots(await (await capped(res, `${origin}/robots.txt`, 1024 * 1024)).text(), robotsToken);
         } catch {
-          return DISALLOW_ALL;
+          return UNREACHABLE;
         }
       })();
       robotsCache.set(origin, p);
@@ -224,8 +234,12 @@ export function createPoliteFetch(opts: PoliteFetchOptions): PoliteFetch {
   async function checkRobots(u: URL, extraPaths: string[] = []) {
     if (!respectRobots) return;
     const robots = await robotsFor(u.origin);
-    const paths = [u.pathname + u.search, ...extraPaths];
-    if (!paths.every((p) => isPathAllowed(robots, p))) throw new RobotsDisallowedError(u.toString());
+    // Not reachable right now: a temporary failure (retried next run), never a site's "no".
+    if (robots.unreachable) throw new RobotsUnavailableError(u.toString());
+    // Extra paths are app routes whose case isn't canonical (Workday "/Global/" vs "/global/"):
+    // match them case-insensitively so a disallowed site can't slip through on case.
+    const ok = isPathAllowed(robots, u.pathname + u.search) && extraPaths.every((p) => isPathAllowedIgnoreCase(robots, p));
+    if (!ok) throw new RobotsDisallowedError(u.toString());
     if (robots.crawlDelaySec) {
       const h = hostState(hostGroup(u.host));
       h.gapMs = Math.max(h.gapMs, Math.min(robots.crawlDelaySec, 30) * 1000);

@@ -4,10 +4,18 @@
 export type RobotsRules = {
   rules: { allow: boolean; pattern: string }[];
   crawlDelaySec: number | null;
+  /** robots.txt couldn't be fetched (5xx, network): treat as "not now", not as a site's answer. */
+  unreachable?: boolean;
 };
 
 export const ALLOW_ALL: RobotsRules = { rules: [], crawlDelaySec: null };
 export const DISALLOW_ALL: RobotsRules = { rules: [{ allow: false, pattern: "/" }], crawlDelaySec: null };
+export const UNREACHABLE: RobotsRules = { ...DISALLOW_ALL, unreachable: true };
+
+/** Case-insensitive variant for app paths whose case isn't canonical (Workday site names). */
+export function isPathAllowedIgnoreCase(robots: RobotsRules, path: string): boolean {
+  return isPathAllowed({ ...robots, rules: robots.rules.map((r) => ({ ...r, pattern: r.pattern.toLowerCase() })) }, path.toLowerCase());
+}
 
 /** RFC 9309: parse at most 500 KiB. Rules longer than this are ignored. */
 const MAX_ROBOTS_CHARS = 500 * 1024;
