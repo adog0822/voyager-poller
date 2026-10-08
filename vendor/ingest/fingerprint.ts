@@ -18,6 +18,7 @@ export type CustomPlatform =
   | "microsoft"
   | "jazzhr"
   | "jibe"
+  | "paylocity"
   | "icims"
   | "taleo"
   | "jobvite"
@@ -206,6 +207,13 @@ export function fingerprint(raw: string): Fingerprint | null {
     // robots.txt disallows crawling SmartRecruiters: track via the company's own site.
     const id = parts[0] ?? "unknown";
     return custom("smartrecruiters", null, `smartrecruiters:${id.toLowerCase()}`, "smartrecruiters-needs-company-careers-url");
+  }
+  // Paylocity: recruiting.paylocity.com/Recruiting/Jobs/All/{guid}[/{name}]
+  if (host === "recruiting.paylocity.com") {
+    const i = parts.findIndex((p) => p.toLowerCase() === "all");
+    const guid = i >= 0 ? parts[i + 1] : undefined;
+    if (!guid || !/^[0-9a-f-]{36}$/i.test(guid)) return custom("paylocity", null, "paylocity:unknown", "paylocity-board-id-unknown");
+    return custom("paylocity", `https://recruiting.paylocity.com/Recruiting/Jobs/All/${guid.toLowerCase()}`, `paylocity:${guid.toLowerCase()}`);
   }
   // Jibe (iCIMS front-end) on {company}.jibeapply.com or the company's own domain (marked
   // with ats=jibe). Listings come from {origin}/api/jobs on that same front-end.

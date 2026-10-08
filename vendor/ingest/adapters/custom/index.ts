@@ -5,11 +5,12 @@ import { jazzhr } from "./jazzhr.ts";
 import { jibe } from "./jibe.ts";
 import { jobvite } from "./jobvite.ts";
 import { microsoft } from "./microsoft.ts";
+import { paylocity } from "./paylocity.ts";
 
 // `ats = "custom"` sources pick an implementation by `config.platform`.
 // Not supported (stay disabled): taleo (portal-id REST), smartrecruiters (robots),
 // avature/wayfair (robots + bot protection), unknown one-off sites.
-export const CUSTOM_PLATFORMS = { amazon, microsoft, icims, jobvite, jazzhr, jibe } as const;
+export const CUSTOM_PLATFORMS = { amazon, microsoft, icims, jobvite, jazzhr, jibe, paylocity } as const;
 export type CustomPlatformName = keyof typeof CUSTOM_PLATFORMS;
 export const SUPPORTED_CUSTOM_PLATFORMS = Object.keys(CUSTOM_PLATFORMS) as CustomPlatformName[];
 
